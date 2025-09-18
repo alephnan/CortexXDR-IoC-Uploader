@@ -1,0 +1,26 @@
+{
+  "tenants": [
+    {
+      "name": "production",
+      "fqdn": "prod-tenant.xdr.us.paloaltonetworks.com",
+      "api_key_id": "your_production_api_key_id",
+      "api_key": "your_production_api_key",
+      "advanced": true
+    },
+    {
+      "name": "staging",
+      "fqdn": "staging-tenant.xdr.us.paloaltonetworks.com",
+      "api_key_id": "your_staging_api_key_id",
+      "api_key": "your_staging_api_key",
+      "advanced": true
+    },
+    {
+      "name": "dev",
+      "fqdn": "dev-tenant.xdr.us.paloaltonetworks.com",
+      "api_key_id": "your_dev_api_key_id",
+      "api_key": "your_dev_api_key",
+      "advanced": false
+    }
+  ],
+  "log_level": "INFO"
+}
