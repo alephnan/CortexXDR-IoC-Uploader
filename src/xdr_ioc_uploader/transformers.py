@@ -7,7 +7,7 @@ from typing import List, Dict, Any
 from .models import IndicatorRow, IndicatorTypeJson
 
 
-CSV_COLUMNS = ["indicator", "type", "severity", "reputation", "expiration_date", "comment"]
+CSV_COLUMNS = ["indicator", "type", "severity", "reputation", "expiration_date", "comment", "reliability"]
 
 
 def build_csv_request_data(rows: List[IndicatorRow]) -> str:
@@ -24,6 +24,7 @@ def build_csv_request_data(rows: List[IndicatorRow]) -> str:
             row.reputation or "",
             exp if exp is not None else "",
             row.comment or "",
+            row.reliability or "",
         ])
     return output.getvalue()
 
@@ -47,6 +48,7 @@ def build_json_objects(rows: List[IndicatorRow]) -> List[Dict[str, Any]]:
             "reputation": row.reputation,
             "expiration_date": exp_json,
             "comment": row.comment,
+            "reliability": row.reliability,
         }
         # Remove None values
         objects.append({k: v for k, v in obj.items() if v is not None})

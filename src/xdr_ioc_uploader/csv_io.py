@@ -10,7 +10,7 @@ from .uploader import UploadMode
 
 
 REQUIRED_COLUMNS = ["indicator", "type", "severity"]
-OPTIONAL_COLUMNS = ["reputation", "expiration_date", "comment"]
+OPTIONAL_COLUMNS = ["reputation", "expiration_date", "comment", "reliability"]
 ALL_COLUMNS = REQUIRED_COLUMNS + OPTIONAL_COLUMNS
 
 

@@ -1,6 +1,6 @@
-indicator,type,severity,reputation,expiration_date,comment
-1.2.3.4,IP,HIGH,BAD,Never,malicious ip
-evil.com,DOMAIN_NAME,MEDIUM,SUSPICIOUS,2025-12-31T00:00:00Z,watchlist domain
-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, HASH, LOW, UNKNOWN,,sha1 hash example
-\\\\server\\share\\bad.exe,PATH,CRITICAL,BAD,,malicious path (CSV only)
+indicator,type,severity,reputation,expiration_date,comment,reliability
+1.2.3.4,IP,HIGH,BAD,Never,malicious ip,A
+evil.com,DOMAIN_NAME,MEDIUM,SUSPICIOUS,2025-12-31T00:00:00Z,watchlist domain,B
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, HASH, LOW, UNKNOWN,,sha1 hash example,C
+\\\\server\\share\\bad.exe,PATH,CRITICAL,BAD,,malicious path (CSV only),A
 

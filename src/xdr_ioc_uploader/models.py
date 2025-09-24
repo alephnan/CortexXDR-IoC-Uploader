@@ -53,6 +53,7 @@ class IndicatorRow(BaseModel):
     reputation: Optional[str] = None
     expiration_date: Optional[Union[str, int]] = None  # epoch ms, ISO, or "Never" for CSV
     comment: Optional[str] = None
+    reliability: Optional[str] = None
 
     @field_validator("type")
     @classmethod
@@ -79,6 +80,16 @@ class IndicatorRow(BaseModel):
         v_up = v.strip().upper()
         if v_up not in {r.value for r in Reputation}:
             raise ValueError(f"Invalid reputation: {v}")
+        return v_up
+
+    @field_validator("reliability")
+    @classmethod
+    def validate_reliability(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        v_up = v.strip().upper()
+        if v_up not in {r.value for r in Reliability}:
+            raise ValueError(f"Invalid reliability: {v}")
         return v_up
 
     @field_validator("expiration_date")
