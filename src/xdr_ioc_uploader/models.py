@@ -44,6 +44,7 @@ class Reliability(str, Enum):
     D = "D"
     E = "E"
     F = "F"
+    G = "G"
 
 
 class IndicatorRow(BaseModel):

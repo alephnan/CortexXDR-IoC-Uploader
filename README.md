@@ -11,6 +11,7 @@ CLI to validate and upload IOC CSV/JSON files to Cortex XDR. Supports both singl
 - Chunked uploads with batch sizing
 - **Per-tenant reporting**: Individual and consolidated reports
 - Automatic report artifacts under `reports/`
+- Local CSV preprocessing commands for classification and bulk metadata adjustments
 
 ---
 
@@ -229,6 +230,51 @@ Options:
 - `--tenants "name1,name2"` - Comma-separated list of tenant names to test
 - `--max-workers N` - Maximum concurrent authentication tests (default: 5)
 
+### File Operations Commands
+
+Offline helpers to adjust CSV indicators before validation or upload. All commands share these options:
+- `--output/-o PATH` - Write to a new file (default: `<name>-<command>.csv`)
+- `--in-place` - Overwrite the source file (creates `.bak` unless `--no-backup`)
+- `--no-backup` - Skip backup creation when using `--in-place`
+- `--only-empty` - Change only rows where the target column is empty/blank
+- `--dry-run` - Show the summary without writing any file
+- Per-type overrides: use `--hash`, `--ip`, `--domain`, `--path`, `--filename` to apply the command default to that type, or `--hash-value VALUE` / `--ip-value VALUE` etc. for explicit per-type overrides
+
+#### file-classify
+```bash
+xdr-ioc-uploader file-classify <file> [OPTIONS]
+```
+- Infers `type` from the indicator value (hash, IP, domain, path, filename)
+- `--force` overwrites existing values, `--only-empty` fills blanks only
+
+#### file-reputation
+```bash
+xdr-ioc-uploader file-reputation <value> <file> [OPTIONS]
+```
+- Sets `reputation` (`bad`, `good`, `suspicious`, `unknown`, `no reputation` to clear)
+- Per-type flags override the default for matching indicator types (`--hash` applies the command value; `--hash-value VALUE` sets a custom one)
+
+#### file-severity
+```bash
+xdr-ioc-uploader file-severity <value> <file> [OPTIONS]
+```
+- Sets `severity` (`high`, `medium`, `low`, `critical`, `informational` -> `INFO`)
+- Per-type overrides apply the provided severity to matching types (`--hash` applies the command value; `--hash-value VALUE` sets a custom one)
+
+#### file-comment
+```bash
+xdr-ioc-uploader file-comment <text> <file> [OPTIONS]
+```
+- Replaces the `comment` field; quote the text when it contains spaces
+- Per-type overrides set custom comments on specific indicator types (`--hash` applies the command value; `--hash-value VALUE` sets a custom one)
+
+#### file-reliability
+```bash
+xdr-ioc-uploader file-reliability <value> <file> [OPTIONS]
+```
+- Sets `reliability` (`A`, `B`, `C`, `D`, `E`, `F`, `G`)
+- Per-type overrides apply different reliability grades when needed (`--hash` applies the command value; `--hash-value VALUE` sets a custom one)
+
 ---
 
 ## File Formats
@@ -236,15 +282,16 @@ Options:
 ### CSV (preferred)
 Columns (header required):
 ```
-indicator,type,severity,reputation,expiration_date,comment
+indicator,type,severity,reputation,expiration_date,comment,reliability
 ```
 
 Notes:
 - Required: `indicator`, `type`, `severity`
-- Optional: `reputation`, `expiration_date`, `comment`
+- Optional: `reputation`, `expiration_date`, `comment`, `reliability`
 - `type` one of: `HASH, IP, PATH (CSV only), DOMAIN_NAME, FILENAME`
 - `severity` one of: `INFO, LOW, MEDIUM, HIGH, CRITICAL`
 - `reputation` one of: `GOOD, BAD, SUSPICIOUS, UNKNOWN`
+- `reliability` one of: `A, B, C, D, E, F, G`
 - `expiration_date`: ISO-8601 (e.g., `2025-12-31T00:00:00Z`), epoch (s/ms), or `Never`
 - Empty rows are ignored automatically
 

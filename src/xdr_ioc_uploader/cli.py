@@ -4,14 +4,16 @@ import json
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
+from . import file_ops
 from .config import Settings, get_settings
 from .csv_io import load_csv_rows
+from .models import IndicatorRow, IndicatorType
 from .multi_tenant_config import get_multi_tenant_settings
 from .multi_tenant_uploader import MultiTenantUploader
 from .reporting import emit_run_artifact, write_errors_csv, emit_multi_tenant_artifact, write_multi_tenant_errors_csv
@@ -24,6 +26,132 @@ app = typer.Typer(add_completion=False, help="Validate and upload IOC CSV/JSON f
 console = Console()
 
 
+def _format_summary_value(value: object) -> str:
+	if isinstance(value, dict):
+		if not value:
+			return "-"
+		return ", ".join(f"{k}={v}" for k, v in sorted(value.items()))
+	return str(value)
+
+
+def _print_operation_summary(title: str, summary: Dict[str, object]) -> None:
+	table = Table(title=title, show_header=True, header_style="bold cyan")
+	table.add_column("Metric", style="cyan", no_wrap=True)
+	table.add_column("Value", style="white")
+	for key, value in summary.items():
+		table.add_row(str(key), _format_summary_value(value))
+	console.print(table)
+
+
+def _resolve_override_value(
+	default_value: str,
+	use_default: bool,
+	explicit_value: Optional[str],
+) -> Optional[str]:
+	if explicit_value is not None:
+		return explicit_value
+	if use_default:
+		return default_value
+	return None
+
+
+def _build_override_map(
+	default_value: str,
+	*,
+	hash_default: bool,
+	hash_value: Optional[str],
+	ip_default: bool,
+	ip_value: Optional[str],
+	domain_default: bool,
+	domain_value: Optional[str],
+	path_default: bool,
+	path_value: Optional[str],
+	filename_default: bool,
+	filename_value: Optional[str],
+) -> Tuple[Dict[str, Optional[str]], bool]:
+	default_flags = {
+		IndicatorType.HASH.value: hash_default,
+		IndicatorType.IP.value: ip_default,
+		IndicatorType.DOMAIN_NAME.value: domain_default,
+		IndicatorType.PATH.value: path_default,
+		IndicatorType.FILENAME.value: filename_default,
+	}
+	explicit_values = {
+		IndicatorType.HASH.value: hash_value,
+		IndicatorType.IP.value: ip_value,
+		IndicatorType.DOMAIN_NAME.value: domain_value,
+		IndicatorType.PATH.value: path_value,
+		IndicatorType.FILENAME.value: filename_value,
+	}
+	overrides: Dict[str, Optional[str]] = {}
+	for type_value, explicit in explicit_values.items():
+		if explicit is not None:
+			overrides[type_value] = explicit
+	for type_value, use_default in default_flags.items():
+		if use_default and type_value not in overrides:
+			overrides[type_value] = default_value
+	apply_default_globally = not any(default_flags.values())
+	return overrides, apply_default_globally
+
+
+def _resolve_output_path(
+	file_path: Path,
+	output: Optional[Path],
+	in_place: bool,
+	command_name: str,
+) -> Path:
+	if in_place and output is not None:
+		raise typer.BadParameter("Cannot use --output with --in-place.", param_hint="--output")
+
+	target = file_path if in_place else output or file_ops.resolve_default_output(file_path, command_name)
+
+	if not in_place:
+		try:
+			if target.resolve() == file_path.resolve():
+				raise typer.BadParameter(
+					"Output path matches input; use --in-place instead.",
+					param_hint="--output",
+				)
+		except FileNotFoundError:
+			pass
+
+	return target
+
+
+def _write_operation_output(
+	*,
+	command_name: str,
+	file_path: Path,
+	output: Optional[Path],
+	in_place: bool,
+	no_backup: bool,
+	dry_run: bool,
+	encoding: str,
+	rows: List[IndicatorRow],
+) -> None:
+	if no_backup and not in_place:
+		raise typer.BadParameter(
+			"--no-backup can only be used with --in-place.",
+			param_hint="--no-backup",
+		)
+	if dry_run:
+		console.print("[yellow]Dry-run: no files written.[/yellow]")
+		return
+
+	target = _resolve_output_path(file_path, output, in_place, command_name)
+	backup_path: Optional[Path] = None
+	if in_place and not no_backup:
+		backup_path = file_ops.create_backup(file_path)
+		console.print(f"[yellow]Backup created: {backup_path}[/yellow]")
+
+	file_ops.write_rows(rows, target, encoding)
+	console.print(f"[green]Wrote {len(rows)} rows to {target}[/green]")
+	if not in_place:
+		console.print(f"[blue]Output file: {target}[/blue]")
+	if backup_path:
+		console.print(f"[blue]Original preserved at: {backup_path}[/blue]")
+
+
 def _print_summary(summary: dict) -> None:
 	table = Table(show_header=True, header_style="bold magenta")
 	table.add_column("Metric")
@@ -31,6 +159,537 @@ def _print_summary(summary: dict) -> None:
 	for key, value in summary.items():
 		table.add_row(str(key), str(value))
 	console.print(table)
+
+
+@app.command(name="file-classify")
+def file_classify(
+	file: Path = typer.Argument(
+		...,
+		exists=True,
+		readable=True,
+		dir_okay=False,
+		help="Path to the IOC CSV file",
+	),
+	output: Optional[Path] = typer.Option(
+		None,
+		"--output",
+		"-o",
+		help="Write results to this CSV file (defaults to <name>-classify.csv).",
+	),
+	in_place: bool = typer.Option(False, "--in-place", help="Overwrite the input file with results."),
+	no_backup: bool = typer.Option(False, "--no-backup", help="Skip creating a .bak when using --in-place."),
+	only_empty: bool = typer.Option(False, "--only-empty", help="Only set type when the column is empty."),
+	force: bool = typer.Option(False, "--force", help="Overwrite existing types even when they differ."),
+	dry_run: bool = typer.Option(False, "--dry-run", help="Preview changes without writing any file."),
+):
+	try:
+		rows, encoding, original_types = file_ops.load_rows_for_classification(file)
+		result = file_ops.classify_rows(
+			rows,
+			only_empty=only_empty,
+			force=force,
+			original_types=original_types,
+		)
+		_print_operation_summary("Classification Summary", result.summary)
+		_write_operation_output(
+			command_name="file-classify",
+			file_path=file,
+			output=output,
+			in_place=in_place,
+			no_backup=no_backup,
+			dry_run=dry_run,
+			encoding=encoding,
+			rows=result.rows,
+		)
+	except typer.BadParameter:
+		raise
+	except Exception as exc:
+		console.print(f"[red]File classification failed: {exc}[/red]")
+		raise typer.Exit(code=1)
+
+
+@app.command(name="file-reputation")
+def file_reputation(
+	value: str = typer.Argument(
+		...,
+		metavar="VALUE",
+		help="Default reputation to assign (bad, good, suspicious, unknown, no reputation).",
+	),
+	file: Path = typer.Argument(
+		...,
+		exists=True,
+		readable=True,
+		dir_okay=False,
+		help="Path to the IOC CSV file",
+	),
+	output: Optional[Path] = typer.Option(
+		None,
+		"--output",
+		"-o",
+		help="Write results to this CSV file (defaults to <name>-reputation.csv).",
+	),
+	in_place: bool = typer.Option(False, "--in-place", help="Overwrite the input file with results."),
+	no_backup: bool = typer.Option(False, "--no-backup", help="Skip creating a .bak when using --in-place."),
+	only_empty: bool = typer.Option(False, "--only-empty", help="Only update rows where reputation is empty."),
+	dry_run: bool = typer.Option(False, "--dry-run", help="Preview changes without writing any file."),
+	hash_default: bool = typer.Option(
+		False,
+		"--hash",
+		help="Apply the command default to HASH indicators.",
+	),
+	hash_value: Optional[str] = typer.Option(
+		None,
+		"--hash-value",
+		help="Explicit override value for HASH indicators.",
+		metavar="VALUE",
+	),
+	ip_default: bool = typer.Option(
+		False,
+		"--ip",
+		help="Apply the command default to IP indicators.",
+	),
+	ip_value: Optional[str] = typer.Option(
+		None,
+		"--ip-value",
+		help="Explicit override value for IP indicators.",
+		metavar="VALUE",
+	),
+	domain_default: bool = typer.Option(
+		False,
+		"--domain",
+		help="Apply the command default to DOMAIN_NAME indicators.",
+	),
+	domain_value: Optional[str] = typer.Option(
+		None,
+		"--domain-value",
+		help="Explicit override value for DOMAIN_NAME indicators.",
+		metavar="VALUE",
+	),
+	path_default: bool = typer.Option(
+		False,
+		"--path",
+		help="Apply the command default to PATH indicators.",
+	),
+	path_value: Optional[str] = typer.Option(
+		None,
+		"--path-value",
+		help="Explicit override value for PATH indicators.",
+		metavar="VALUE",
+	),
+	filename_default: bool = typer.Option(
+		False,
+		"--filename",
+		help="Apply the command default to FILENAME indicators.",
+	),
+	filename_value: Optional[str] = typer.Option(
+		None,
+		"--filename-value",
+		help="Explicit override value for FILENAME indicators.",
+		metavar="VALUE",
+	),
+):
+	overrides, apply_globally = _build_override_map(
+		value,
+		hash_default=hash_default,
+		hash_value=hash_value,
+		ip_default=ip_default,
+		ip_value=ip_value,
+		domain_default=domain_default,
+		domain_value=domain_value,
+		path_default=path_default,
+		path_value=path_value,
+		filename_default=filename_default,
+		filename_value=filename_value,
+	)
+	try:
+		rows, encoding = file_ops.load_rows(file)
+		result = file_ops.apply_reputation(
+			rows,
+			value,
+			overrides,
+			only_empty=only_empty,
+			apply_default_globally=apply_globally,
+		)
+		_print_operation_summary("Reputation Update", result.summary)
+		_write_operation_output(
+			command_name="file-reputation",
+			file_path=file,
+			output=output,
+			in_place=in_place,
+			no_backup=no_backup,
+			dry_run=dry_run,
+			encoding=encoding,
+			rows=result.rows,
+		)
+	except file_ops.FileOperationError as exc:
+		raise typer.BadParameter(str(exc))
+	except typer.BadParameter:
+		raise
+	except Exception as exc:
+		console.print(f"[red]File reputation update failed: {exc}[/red]")
+		raise typer.Exit(code=1)
+
+
+@app.command(name="file-severity")
+def file_severity(
+	value: str = typer.Argument(
+		...,
+		metavar="VALUE",
+		help="Default severity to assign (high, medium, low, critical, informational).",
+	),
+	file: Path = typer.Argument(
+		...,
+		exists=True,
+		readable=True,
+		dir_okay=False,
+		help="Path to the IOC CSV file",
+	),
+	output: Optional[Path] = typer.Option(
+		None,
+		"--output",
+		"-o",
+		help="Write results to this CSV file (defaults to <name>-severity.csv).",
+	),
+	in_place: bool = typer.Option(False, "--in-place", help="Overwrite the input file with results."),
+	no_backup: bool = typer.Option(False, "--no-backup", help="Skip creating a .bak when using --in-place."),
+	only_empty: bool = typer.Option(False, "--only-empty", help="Only update rows where severity is empty."),
+	dry_run: bool = typer.Option(False, "--dry-run", help="Preview changes without writing any file."),
+	hash_default: bool = typer.Option(
+		False,
+		"--hash",
+		help="Apply the command default to HASH indicators.",
+	),
+	hash_value: Optional[str] = typer.Option(
+		None,
+		"--hash-value",
+		help="Explicit override value for HASH indicators.",
+		metavar="VALUE",
+	),
+	ip_default: bool = typer.Option(
+		False,
+		"--ip",
+		help="Apply the command default to IP indicators.",
+	),
+	ip_value: Optional[str] = typer.Option(
+		None,
+		"--ip-value",
+		help="Explicit override value for IP indicators.",
+		metavar="VALUE",
+	),
+	domain_default: bool = typer.Option(
+		False,
+		"--domain",
+		help="Apply the command default to DOMAIN_NAME indicators.",
+	),
+	domain_value: Optional[str] = typer.Option(
+		None,
+		"--domain-value",
+		help="Explicit override value for DOMAIN_NAME indicators.",
+		metavar="VALUE",
+	),
+	path_default: bool = typer.Option(
+		False,
+		"--path",
+		help="Apply the command default to PATH indicators.",
+	),
+	path_value: Optional[str] = typer.Option(
+		None,
+		"--path-value",
+		help="Explicit override value for PATH indicators.",
+		metavar="VALUE",
+	),
+	filename_default: bool = typer.Option(
+		False,
+		"--filename",
+		help="Apply the command default to FILENAME indicators.",
+	),
+	filename_value: Optional[str] = typer.Option(
+		None,
+		"--filename-value",
+		help="Explicit override value for FILENAME indicators.",
+		metavar="VALUE",
+	),
+):
+	overrides, apply_globally = _build_override_map(
+		value,
+		hash_default=hash_default,
+		hash_value=hash_value,
+		ip_default=ip_default,
+		ip_value=ip_value,
+		domain_default=domain_default,
+		domain_value=domain_value,
+		path_default=path_default,
+		path_value=path_value,
+		filename_default=filename_default,
+		filename_value=filename_value,
+	)
+	try:
+		rows, encoding = file_ops.load_rows(file)
+		result = file_ops.apply_severity(
+			rows,
+			value,
+			overrides,
+			only_empty=only_empty,
+			apply_default_globally=apply_globally,
+		)
+		_print_operation_summary("Severity Update", result.summary)
+		_write_operation_output(
+			command_name="file-severity",
+			file_path=file,
+			output=output,
+			in_place=in_place,
+			no_backup=no_backup,
+			dry_run=dry_run,
+			encoding=encoding,
+			rows=result.rows,
+		)
+	except file_ops.FileOperationError as exc:
+		raise typer.BadParameter(str(exc))
+	except typer.BadParameter:
+		raise
+	except Exception as exc:
+		console.print(f"[red]File severity update failed: {exc}[/red]")
+		raise typer.Exit(code=1)
+
+
+@app.command(name="file-comment")
+def file_comment(
+	text: str = typer.Argument(..., metavar="TEXT", help="Comment text to assign to the comment column."),
+	file: Path = typer.Argument(
+		...,
+		exists=True,
+		readable=True,
+		dir_okay=False,
+		help="Path to the IOC CSV file",
+	),
+	output: Optional[Path] = typer.Option(
+		None,
+		"--output",
+		"-o",
+		help="Write results to this CSV file (defaults to <name>-comment.csv).",
+	),
+	in_place: bool = typer.Option(False, "--in-place", help="Overwrite the input file with results."),
+	no_backup: bool = typer.Option(False, "--no-backup", help="Skip creating a .bak when using --in-place."),
+	only_empty: bool = typer.Option(False, "--only-empty", help="Only update rows where comment is empty."),
+	dry_run: bool = typer.Option(False, "--dry-run", help="Preview changes without writing any file."),
+	hash_default: bool = typer.Option(
+		False,
+		"--hash",
+		help="Apply the command default comment to HASH indicators.",
+	),
+	hash_value: Optional[str] = typer.Option(
+		None,
+		"--hash-value",
+		help="Explicit comment for HASH indicators.",
+		metavar="VALUE",
+	),
+	ip_default: bool = typer.Option(
+		False,
+		"--ip",
+		help="Apply the command default comment to IP indicators.",
+	),
+	ip_value: Optional[str] = typer.Option(
+		None,
+		"--ip-value",
+		help="Explicit comment for IP indicators.",
+		metavar="VALUE",
+	),
+	domain_default: bool = typer.Option(
+		False,
+		"--domain",
+		help="Apply the command default comment to DOMAIN_NAME indicators.",
+	),
+	domain_value: Optional[str] = typer.Option(
+		None,
+		"--domain-value",
+		help="Explicit comment for DOMAIN_NAME indicators.",
+		metavar="VALUE",
+	),
+	path_default: bool = typer.Option(
+		False,
+		"--path",
+		help="Apply the command default comment to PATH indicators.",
+	),
+	path_value: Optional[str] = typer.Option(
+		None,
+		"--path-value",
+		help="Explicit comment for PATH indicators.",
+		metavar="VALUE",
+	),
+	filename_default: bool = typer.Option(
+		False,
+		"--filename",
+		help="Apply the command default comment to FILENAME indicators.",
+	),
+	filename_value: Optional[str] = typer.Option(
+		None,
+		"--filename-value",
+		help="Explicit comment for FILENAME indicators.",
+		metavar="VALUE",
+	),
+):
+	overrides, apply_globally = _build_override_map(
+		text,
+		hash_default=hash_default,
+		hash_value=hash_value,
+		ip_default=ip_default,
+		ip_value=ip_value,
+		domain_default=domain_default,
+		domain_value=domain_value,
+		path_default=path_default,
+		path_value=path_value,
+		filename_default=filename_default,
+		filename_value=filename_value,
+	)
+	try:
+		rows, encoding = file_ops.load_rows(file)
+		result = file_ops.apply_comment(
+			rows,
+			text,
+			overrides,
+			only_empty=only_empty,
+			apply_default_globally=apply_globally,
+		)
+		_print_operation_summary("Comment Update", result.summary)
+		_write_operation_output(
+			command_name="file-comment",
+			file_path=file,
+			output=output,
+			in_place=in_place,
+			no_backup=no_backup,
+			dry_run=dry_run,
+			encoding=encoding,
+			rows=result.rows,
+		)
+	except file_ops.FileOperationError as exc:
+		raise typer.BadParameter(str(exc))
+	except typer.BadParameter:
+		raise
+	except Exception as exc:
+		console.print(f"[red]File comment update failed: {exc}[/red]")
+		raise typer.Exit(code=1)
+
+
+@app.command(name="file-reliability")
+def file_reliability(
+	value: str = typer.Argument(
+		...,
+		metavar="VALUE",
+		help="Default reliability to assign (A, B, C, D, E, F, G).",
+	),
+	file: Path = typer.Argument(
+		...,
+		exists=True,
+		readable=True,
+		dir_okay=False,
+		help="Path to the IOC CSV file",
+	),
+	output: Optional[Path] = typer.Option(
+		None,
+		"--output",
+		"-o",
+		help="Write results to this CSV file (defaults to <name>-reliability.csv).",
+	),
+	in_place: bool = typer.Option(False, "--in-place", help="Overwrite the input file with results."),
+	no_backup: bool = typer.Option(False, "--no-backup", help="Skip creating a .bak when using --in-place."),
+	only_empty: bool = typer.Option(False, "--only-empty", help="Only update rows where reliability is empty."),
+	dry_run: bool = typer.Option(False, "--dry-run", help="Preview changes without writing any file."),
+	hash_default: bool = typer.Option(
+		False,
+		"--hash",
+		help="Apply the command default to HASH indicators.",
+	),
+	hash_value: Optional[str] = typer.Option(
+		None,
+		"--hash-value",
+		help="Explicit override value for HASH indicators.",
+		metavar="VALUE",
+	),
+	ip_default: bool = typer.Option(
+		False,
+		"--ip",
+		help="Apply the command default to IP indicators.",
+	),
+	ip_value: Optional[str] = typer.Option(
+		None,
+		"--ip-value",
+		help="Explicit override value for IP indicators.",
+		metavar="VALUE",
+	),
+	domain_default: bool = typer.Option(
+		False,
+		"--domain",
+		help="Apply the command default to DOMAIN_NAME indicators.",
+	),
+	domain_value: Optional[str] = typer.Option(
+		None,
+		"--domain-value",
+		help="Explicit override value for DOMAIN_NAME indicators.",
+		metavar="VALUE",
+	),
+	path_default: bool = typer.Option(
+		False,
+		"--path",
+		help="Apply the command default to PATH indicators.",
+	),
+	path_value: Optional[str] = typer.Option(
+		None,
+		"--path-value",
+		help="Explicit override value for PATH indicators.",
+		metavar="VALUE",
+	),
+	filename_default: bool = typer.Option(
+		False,
+		"--filename",
+		help="Apply the command default to FILENAME indicators.",
+	),
+	filename_value: Optional[str] = typer.Option(
+		None,
+		"--filename-value",
+		help="Explicit override value for FILENAME indicators.",
+		metavar="VALUE",
+	),
+):
+	overrides, apply_globally = _build_override_map(
+		value,
+		hash_default=hash_default,
+		hash_value=hash_value,
+		ip_default=ip_default,
+		ip_value=ip_value,
+		domain_default=domain_default,
+		domain_value=domain_value,
+		path_default=path_default,
+		path_value=path_value,
+		filename_default=filename_default,
+		filename_value=filename_value,
+	)
+	try:
+		rows, encoding = file_ops.load_rows(file)
+		result = file_ops.apply_reliability(
+			rows,
+			value,
+			overrides,
+			only_empty=only_empty,
+			apply_default_globally=apply_globally,
+		)
+		_print_operation_summary("Reliability Update", result.summary)
+		_write_operation_output(
+			command_name="file-reliability",
+			file_path=file,
+			output=output,
+			in_place=in_place,
+			no_backup=no_backup,
+			dry_run=dry_run,
+			encoding=encoding,
+			rows=result.rows,
+		)
+	except file_ops.FileOperationError as exc:
+		raise typer.BadParameter(str(exc))
+	except typer.BadParameter:
+		raise
+	except Exception as exc:
+		console.print(f"[red]File reliability update failed: {exc}[/red]")
+		raise typer.Exit(code=1)
 
 
 @app.command()

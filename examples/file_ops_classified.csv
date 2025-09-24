@@ -1,0 +1,8 @@
+indicator,type,severity,reputation,expiration_date,comment,reliability
+8d969eef6ecad3c29a3a629280e686cf,HASH,HIGH,BAD,Never,Known credential dump,A
+e2fc714c4727ee9395f324cd2e7f331f,HASH,CRITICAL,GOOD,,,
+203.0.113.45,IP,LOW,UNKNOWN,1767139200000,,C
+suspicious-domain.test,DOMAIN_NAME,MEDIUM,SUSPICIOUS,,Campaign 2024,E
+C:\Windows\Temp\malware.exe,PATH,HIGH,BAD,,Disk artifact,D
+invoice_2024.pdf,FILENAME,INFO,UNKNOWN,,,
+2001:db8::1,IP,MEDIUM,UNKNOWN,,IPv6 sample,F

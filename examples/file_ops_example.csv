@@ -1,0 +1,8 @@
+indicator,type,severity,reputation,expiration_date,comment,reliability
+8d969eef6ecad3c29a3a629280e686cf,,HIGH,BAD,Never,Known credential dump,A
+e2fc714c4727ee9395f324cd2e7f331f,,CRITICAL,GOOD,,,
+203.0.113.45,,LOW,UNKNOWN,2025-12-31T00:00:00Z,,C
+suspicious-domain.test,,MEDIUM,SUSPICIOUS,,Campaign 2024,E
+C:\Windows\Temp\malware.exe,,HIGH,BAD,,Disk artifact,D
+invoice_2024.pdf,,INFO,UNKNOWN,,,
+2001:db8::1,,MEDIUM,UNKNOWN,,IPv6 sample,F
