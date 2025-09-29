@@ -63,6 +63,7 @@ venv.bak/
 
 #Others
 CLAUDE.md
+AGENTS.md
 *.claude/
 *.zip
 

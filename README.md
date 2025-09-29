@@ -246,6 +246,9 @@ xdr-ioc-uploader file-classify <file> [OPTIONS]
 ```
 - Infers `type` from the indicator value (hash, IP, domain, path, filename)
 - `--force` overwrites existing values, `--only-empty` fills blanks only
+ - For this command only, the CSV may omit `type` and `severity` columns and/or
+   have empty values for them; only the `indicator` column is required. The
+   output will always include the canonical header and preserve empty severity.
 
 #### file-reputation
 ```bash
@@ -294,6 +297,12 @@ Notes:
 - `reliability` one of: `A, B, C, D, E, F, G`
 - `expiration_date`: ISO-8601 (e.g., `2025-12-31T00:00:00Z`), epoch (s/ms), or `Never`
 - Empty rows are ignored automatically
+
+Exception for `file-classify`:
+- When running the `file-classify` command, only the `indicator` column is
+  required. Missing/empty `type` and `severity` values are allowed so that
+  types can be inferred. Upload/validation commands remain strict and require
+  both `type` and `severity` to be present and valid.
 
 See `examples/csv_template.csv` for a sample.
 

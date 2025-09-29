@@ -69,7 +69,13 @@ def create_backup(path: Path) -> Path:
 
 
 def load_rows_for_classification(path: Path) -> Tuple[List[IndicatorRow], str, List[str]]:
-    """Load rows but tolerate empty/invalid type values for classification."""
+    """Load rows for classification, requiring only the indicator column.
+
+    Notes:
+    - Unlike upload/validation loaders, this tolerates missing/empty `type` and
+      `severity` values and even missing `type`/`severity` columns. The goal is
+      to infer `type` from `indicator` without enforcing unrelated fields.
+    """
 
     encoding = detect_file_encoding(path) or "utf-8"
     rows: List[IndicatorRow] = []
@@ -78,7 +84,8 @@ def load_rows_for_classification(path: Path) -> Tuple[List[IndicatorRow], str, L
     with path.open("r", encoding=encoding, newline="") as handle:
         reader = csv.DictReader(handle)
         header = [h.strip() for h in (reader.fieldnames or [])]
-        missing = [c for c in REQUIRED_COLUMNS if c not in header]
+        # For classification, require only the indicator column in the header.
+        missing = [] if "indicator" in header else ["indicator"]
         unexpected = [c for c in header if c not in ALL_COLUMNS]
         if missing:
             raise FileOperationError(f"Missing required columns: {', '.join(missing)}")
@@ -90,16 +97,8 @@ def load_rows_for_classification(path: Path) -> Tuple[List[IndicatorRow], str, L
         for row_num, raw in enumerate(reader, start=2):
             data = {col: (raw.get(col) or "").strip() for col in ALL_COLUMNS}
 
-            if not any(data.get(col) for col in REQUIRED_COLUMNS):
+            if not data.get("indicator"):
                 continue
-
-            missing_required = [
-                col for col in REQUIRED_COLUMNS if col != "type" and not data.get(col)
-            ]
-            if missing_required:
-                raise FileOperationError(
-                    f"Row {row_num}: Missing required values for columns: {', '.join(missing_required)}"
-                )
 
             original_type = data.get("type") or ""
             normalized_type = original_type.strip().upper()
@@ -112,7 +111,7 @@ def load_rows_for_classification(path: Path) -> Tuple[List[IndicatorRow], str, L
             row_model = IndicatorRow(
                 indicator=data["indicator"],
                 type=placeholder_type,
-                severity=data["severity"],
+                severity=(data["severity"] or None),
                 reputation=data.get("reputation"),
                 expiration_date=data.get("expiration_date"),
                 comment=data.get("comment"),

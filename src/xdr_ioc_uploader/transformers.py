@@ -20,7 +20,7 @@ def build_csv_request_data(rows: List[IndicatorRow]) -> str:
         writer.writerow([
             row.indicator,
             row.type,
-            row.severity,
+            row.severity or "",
             row.reputation or "",
             exp if exp is not None else "",
             row.comment or "",
@@ -36,6 +36,8 @@ def build_json_objects(rows: List[IndicatorRow]) -> List[Dict[str, Any]]:
             raise ValueError("Type PATH is not supported in JSON mode; use CSV mode.")
         if row.type not in {t.value for t in IndicatorTypeJson}:
             raise ValueError(f"Unsupported JSON type: {row.type}")
+        if not row.severity:
+            raise ValueError("Severity is required for JSON mode.")
         exp = row.expiration_date
         if isinstance(exp, str) and exp == "Never":
             exp_json = None
@@ -53,4 +55,3 @@ def build_json_objects(rows: List[IndicatorRow]) -> List[Dict[str, Any]]:
         # Remove None values
         objects.append({k: v for k, v in obj.items() if v is not None})
     return objects
-

@@ -50,7 +50,9 @@ class Reliability(str, Enum):
 class IndicatorRow(BaseModel):
     indicator: str
     type: str
-    severity: str
+    # Severity can be None for preprocessing steps like file-classify.
+    # Upload/validation paths still enforce presence via csv_io.load_csv_rows.
+    severity: Optional[str] = None
     reputation: Optional[str] = None
     expiration_date: Optional[Union[str, int]] = None  # epoch ms, ISO, or "Never" for CSV
     comment: Optional[str] = None
@@ -67,8 +69,14 @@ class IndicatorRow(BaseModel):
 
     @field_validator("severity")
     @classmethod
-    def validate_severity(cls, v: str) -> str:
+    def validate_severity(cls, v: Optional[str]) -> Optional[str]:
+        # Allow None for classification-only flows. Strict loaders still enforce presence.
+        if v is None:
+            return None
         v_up = v.strip().upper()
+        if v_up == "":
+            # Normalize empty strings to None; treated as missing.
+            return None
         if v_up not in {s.value for s in Severity}:
             raise ValueError(f"Invalid severity: {v}")
         return v_up
@@ -114,4 +122,3 @@ class IndicatorRow(BaseModel):
                 num = int(v_str)
                 return num if num > 10_000_000_000 else num * 1000
         raise ValueError("Invalid expiration_date; use epoch ms, ISO-8601, or 'Never'")
-
