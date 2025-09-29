@@ -818,74 +818,6 @@ def test_auth():
 
 
 @app.command()
-def validate_multi(
-	file: Path = typer.Argument(..., exists=True, readable=True, help="Path to the IOC CSV file"),
-	mode: UploadMode = typer.Option(UploadMode.csv, case_sensitive=False, help="Validation mode (csv/json)"),
-	config_file: Optional[Path] = typer.Option(None, help="Path to tenant configuration JSON file"),
-	tenants: Optional[str] = typer.Option(None, help="Comma-separated list of tenant names to validate against"),
-	max_workers: int = typer.Option(5, min=1, max=20, help="Maximum concurrent tenant validations"),
-):
-	"""Validate a CSV/JSON file against multiple XDR tenants."""
-	try:
-		settings = get_multi_tenant_settings(config_file)
-		console.print(f"[blue]Loaded configuration for {len(settings.tenants)} tenants[/blue]")
-		
-		tenant_names = None
-		if tenants:
-			tenant_names = [name.strip() for name in tenants.split(",")]
-			console.print(f"[blue]Validating against selected tenants: {', '.join(tenant_names)}[/blue]")
-		
-		rows = load_csv_rows(file, mode=mode)
-		uploader = MultiTenantUploader(settings, max_workers=max_workers)
-		
-		console.print(f"[blue]Validating {len(rows)} rows against tenants...[/blue]")
-		result = uploader.validate_all(rows, mode, tenant_names)
-		
-		uploader.print_summary(result)
-		
-		# Generate reports
-		payload = {
-			"timestamp": datetime.now().isoformat(),
-			"action": "validate-multi",
-			"file": str(file),
-			"mode": mode.value,
-			"total_rows": len(rows),
-			"tenant_results": [
-				{
-					"tenant_name": r.tenant_name,
-					"success": r.success,
-					"total_rows": r.total_rows,
-					"validation_errors": r.validation_errors,
-					"error_message": r.error_message
-				}
-				for r in result.tenant_results
-			],
-			"summary": {
-				"total_tenants": result.total_tenants,
-				"successful_tenants": result.successful_tenants,
-				"failed_tenants": result.failed_tenants,
-				"overall_success": result.overall_success
-			}
-		}
-		
-		artifacts = emit_multi_tenant_artifact("validate-multi", payload)
-		console.print(f"[blue]Reports saved: {len(artifacts)} files[/blue]")
-		
-		# Write error CSV files for tenants with errors
-		if not result.overall_success:
-			error_paths = write_multi_tenant_errors_csv(payload["tenant_results"])
-			if error_paths:
-				console.print(f"[yellow]Error CSV files: {len(error_paths)} files[/yellow]")
-		
-		if not result.overall_success:
-			raise typer.Exit(code=2)
-			
-	except Exception as e:
-		console.print(f"[red]❌ Multi-tenant validation failed: {e}[/red]")
-		raise typer.Exit(code=1)
-
-
-@app.command()
 def upload_multi(
 	file: Path = typer.Argument(..., exists=True, readable=True, help="Path to the IOC CSV file"),
 	mode: UploadMode = typer.Option(UploadMode.csv, case_sensitive=False, help="Upload mode (csv/json)"),
@@ -893,7 +825,6 @@ def upload_multi(
 	config_file: Optional[Path] = typer.Option(None, help="Path to tenant configuration JSON file"),
 	tenants: Optional[str] = typer.Option(None, help="Comma-separated list of tenant names to upload to"),
 	max_workers: int = typer.Option(5, min=1, max=20, help="Maximum concurrent tenant uploads"),
-	skip_validation: bool = typer.Option(False, help="Skip validation phase (not recommended)"),
 ):
 	"""Upload a CSV/JSON file to multiple XDR tenants."""
 	try:
@@ -909,7 +840,7 @@ def upload_multi(
 		uploader = MultiTenantUploader(settings, max_workers=max_workers)
 		
 		console.print(f"[blue]Uploading {len(rows)} rows to tenants...[/blue]")
-		result = uploader.upload_all(rows, mode, batch_size, tenant_names, validate_first=not skip_validation)
+		result = uploader.upload_all(rows, mode, batch_size, tenant_names)
 		
 		uploader.print_summary(result)
 		
@@ -1115,4 +1046,3 @@ def list_tenants(
 
 if __name__ == "__main__":
 	app()
-

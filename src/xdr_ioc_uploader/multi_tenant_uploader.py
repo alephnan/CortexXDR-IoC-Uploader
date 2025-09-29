@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
@@ -12,7 +12,6 @@ from .api_client import XdrApiClient
 from .config import Settings
 from .models import IndicatorRow
 from .multi_tenant_config import TenantConfig, MultiTenantSettings
-from .rate_limiter import TokenBucket
 from .transformers import build_csv_request_data, build_json_objects
 from .uploader import Uploader, UploadMode
 
@@ -77,10 +76,13 @@ class MultiTenantUploader:
             )
             self.uploaders[tenant.name] = Uploader(tenant_settings)
     
-    def validate_all(self, rows: List[IndicatorRow], mode: UploadMode, 
-                    tenant_names: Optional[List[str]] = None) -> MultiTenantUploadResult:
+    def _validate_all(
+        self,
+        rows: List[IndicatorRow],
+        mode: UploadMode,
+        tenants: List[TenantConfig],
+    ) -> MultiTenantUploadResult:
         """Validate IOC data against all specified tenants."""
-        tenants = self.settings.get_tenants(tenant_names)
         
         with Progress(
             SpinnerColumn(),
@@ -106,21 +108,24 @@ class MultiTenantUploader:
         
         return self._build_multi_tenant_result(results, len(rows))
     
-    def upload_all(self, rows: List[IndicatorRow], mode: UploadMode,
-                  batch_size: int = 1000, tenant_names: Optional[List[str]] = None,
-                  validate_first: bool = True) -> MultiTenantUploadResult:
+    def upload_all(
+        self,
+        rows: List[IndicatorRow],
+        mode: UploadMode,
+        batch_size: int = 1000,
+        tenant_names: Optional[List[str]] = None,
+    ) -> MultiTenantUploadResult:
         """Upload IOC data to all specified tenants."""
         tenants = self.settings.get_tenants(tenant_names)
-        
-        if validate_first:
-            self.console.print("[blue]Validating against all tenants first...[/blue]")
-            validation_result = self.validate_all(rows, mode, tenant_names)
-            
-            if not validation_result.overall_success:
-                self.console.print("[red]Validation failed for some tenants. Upload aborted.[/red]")
-                return validation_result
-            
-            self.console.print("[green]✓ Validation passed for all tenants[/green]")
+
+        self.console.print("[blue]Validating against all tenants before upload...[/blue]")
+        validation_result = self._validate_all(rows, mode, tenants)
+
+        if not validation_result.overall_success:
+            self.console.print("[red]Validation failed for some tenants. Upload aborted.[/red]")
+            return validation_result
+
+        self.console.print("[green]✓ Validation passed for all tenants[/green]")
         
         with Progress(
             SpinnerColumn(),

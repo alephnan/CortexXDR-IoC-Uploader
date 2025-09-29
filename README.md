@@ -144,10 +144,10 @@ xdr-ioc-uploader list-tenants
 # 2) Test authentication for all configured tenants
 xdr-ioc-uploader test-auth-multi
 
-# 3) Validate CSV against all tenants
-xdr-ioc-uploader validate-multi examples/csv_template.csv
+# 3) Run an offline validation pass (optional but recommended)
+xdr-ioc-uploader validate examples/csv_template.csv
 
-# 4) Upload to all configured tenants
+# 4) Upload to all configured tenants (validation runs automatically)
 xdr-ioc-uploader upload-multi examples/csv_template.csv
 
 # 5) Upload to specific tenants only
@@ -155,9 +155,6 @@ xdr-ioc-uploader upload-multi examples/csv_template.csv --tenants "production,st
 
 # 6) Use custom config file and limit concurrent workers
 xdr-ioc-uploader upload-multi examples/csv_template.csv --config-file tenants.json --max-workers 3
-
-# 7) Skip validation phase (not recommended)
-xdr-ioc-uploader upload-multi examples/csv_template.csv --skip-validation
 ```
 
 Artifacts (JSON reports) are written under `reports/` with timestamped filenames. Multi-tenant operations generate both consolidated reports and per-tenant reports.
@@ -199,16 +196,6 @@ Options:
 
 List all configured tenants with their configuration status. Never exposes API keys or credentials for security.
 
-#### validate-multi
-```bash
-xdr-ioc-uploader validate-multi <file> [OPTIONS]
-```
-Options:
-- `--mode csv|json` - Validation mode (default: csv)
-- `--config-file PATH` - Path to tenant configuration JSON file
-- `--tenants "name1,name2"` - Comma-separated list of tenant names to validate against
-- `--max-workers N` - Maximum concurrent tenant validations (default: 5)
-
 #### upload-multi
 ```bash
 xdr-ioc-uploader upload-multi <file> [OPTIONS]
@@ -219,7 +206,10 @@ Options:
 - `--config-file PATH` - Path to tenant configuration JSON file
 - `--tenants "name1,name2"` - Comma-separated list of tenant names to upload to
 - `--max-workers N` - Maximum concurrent tenant uploads (default: 5)
-- `--skip-validation` - Skip validation phase (not recommended)
+
+The command always performs cross-tenant validation before committing. Use
+`xdr-ioc-uploader validate` for offline-only checks when you do not intend to
+upload immediately.
 
 #### test-auth-multi
 ```bash
